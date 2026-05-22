@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import axios from 'axios';
+import { invoke } from '@tauri-apps/api/core';
 import { Download, Loader2, AlertCircle, Clock, Video, Music, Trash2, ArrowDownUp, X } from 'lucide-react';
 import videoImage from '../images/video.png';
 import audioImage from '../images/audio.png';
@@ -70,42 +70,29 @@ const DownloaderCard = () => {
 
     const handleDownload = async () => {
         if (!url || status === 'downloading') return;
+        
         try {
             setStatus('downloading');
             setErrorMsg('');
 
-            const response = await axios.post('http://localhost:5001/api/download', { url, format }, { responseType: 'blob' });
+            // Call Rust directly and wait for the actual video title to be returned
+            const downloadedTitle = await invoke('download_media', { url, format });
 
-            const blob = new Blob([response.data]);
-            const downloadUrl = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = downloadUrl;
+            // Add the real title to the local storage history
+            addHistoryItem({ 
+                id: Date.now().toString(), 
+                url, 
+                fileName: downloadedTitle, 
+                format, 
+                timestamp: Date.now() 
+            });
 
-            const disposition = response.headers['content-disposition'];
-            let fileName = `download.${format === 'video' ? 'mp4' : 'mp3'}`;
-            if (disposition) {
-                const match = disposition.match(/filename="?([^"]+)"?/);
-                if (match?.[1]) fileName = match[1];
-            }
-            a.download = fileName;
-            document.body.appendChild(a);
-            a.click();
-
-            addHistoryItem({ id: Date.now().toString(), url, fileName, format, timestamp: Date.now() });
-
-            window.URL.revokeObjectURL(downloadUrl);
-            document.body.removeChild(a);
             setStatus('idle');
             setUrl('');
+            
         } catch (err) {
-            let errMsg = 'Failed to download. Check the URL and try again.';
-            if (err.response?.data instanceof Blob) {
-                try { errMsg = JSON.parse(await err.response.data.text()).error || errMsg; } catch (e) {}
-            } else if (err.response?.data?.error) {
-                errMsg = err.response.data.error;
-            }
-            setErrorMsg(errMsg);
+            // Tauri passes Rust Err() messages directly to the catch block
+            setErrorMsg(typeof err === 'string' ? err : 'Failed to download. Check the URL.');
             setStatus('error');
             setTimeout(() => setStatus('idle'), 6000);
         }
